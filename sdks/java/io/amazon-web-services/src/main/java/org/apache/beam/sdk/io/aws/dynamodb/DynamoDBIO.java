@@ -85,7 +85,8 @@ import org.slf4j.LoggerFactory;
  *                       t -> KV.of(tableName, writeRequest))
  *               .withRetryConfiguration(
  *                    DynamoDBIO.RetryConfiguration.create(5, Duration.standardMinutes(1)))
- *               .withAwsClientsProvider(new BasicDynamoDbProvider(accessKey, secretKey, region));
+ *               .withAwsClientsProvider(new BasicDynamoDbProvider(accessKey, secretKey, region))
+ *               .withOverwriteByPKeys(overwriteByPKeys));
  * }</pre>
  *
  * <p>As a client, you need to provide at least the following things:
@@ -349,6 +350,9 @@ public final class DynamoDBIO {
     @Nullable
     abstract SerializableFunction<T, KV<String, WriteRequest>> getWriteItemMapperFn();
 
+    @Nullable
+    abstract List<String> getOverwriteByPKeys();
+
     abstract Builder<T> builder();
 
     @AutoValue.Builder
@@ -360,6 +364,8 @@ public final class DynamoDBIO {
 
       abstract Builder<T> setWriteItemMapperFn(
           SerializableFunction<T, KV<String, WriteRequest>> writeItemMapperFn);
+
+      abstract Builder<T> setOverwriteByPKeys(List<String> overwriteByPKeys);
 
       abstract Write<T> build();
     }
@@ -407,6 +413,10 @@ public final class DynamoDBIO {
     public Write<T> withWriteRequestMapperFn(
         SerializableFunction<T, KV<String, WriteRequest>> writeItemMapperFn) {
       return builder().setWriteItemMapperFn(writeItemMapperFn).build();
+    }
+
+    public Write<T> withOverwriteByPKeys(List<String> overwriteByPKeys) {
+      return builder().setOverwriteByPKeys(overwriteByPKeys).build();
     }
 
     @Override
@@ -457,10 +467,33 @@ public final class DynamoDBIO {
       public void processElement(ProcessContext context) throws Exception {
         final KV<String, WriteRequest> writeRequest =
             (KV<String, WriteRequest>) spec.getWriteItemMapperFn().apply(context.element());
+        if (spec.getOverwriteByPKeys() != null) {
+          removeDupPKeysRequestsIfAny(writeRequest.getValue());
+        }
         batch.add(writeRequest);
         if (batch.size() >= BATCH_SIZE) {
           flushBatch();
         }
+      }
+
+      private void removeDupPKeysRequestsIfAny(WriteRequest request) {
+        Map<String, AttributeValue> pKeyValueNew = extractPkeyValues(request);
+        batch.removeIf(item -> extractPkeyValues(item.getValue()).equals(pKeyValueNew));
+      }
+
+      private Map<String, AttributeValue> extractPkeyValues(WriteRequest request) {
+        if (spec.getOverwriteByPKeys() != null) {
+          if (request.getPutRequest() != null) {
+            return request.getPutRequest().getItem().entrySet().stream()
+                .filter(entry -> spec.getOverwriteByPKeys().contains(entry.getKey()))
+                .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
+          } else if (request.getDeleteRequest() != null) {
+            return request.getDeleteRequest().getKey().entrySet().stream()
+                .filter(entry -> spec.getOverwriteByPKeys().contains(entry.getKey()))
+                .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
+          }
+        }
+        return Collections.emptyMap();
       }
 
       @FinishBundle

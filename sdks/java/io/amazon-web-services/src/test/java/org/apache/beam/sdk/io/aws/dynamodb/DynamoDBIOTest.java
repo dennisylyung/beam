@@ -27,6 +27,7 @@ import com.amazonaws.services.dynamodbv2.model.BatchWriteItemRequest;
 import com.amazonaws.services.dynamodbv2.model.ScanRequest;
 import com.amazonaws.services.dynamodbv2.model.WriteRequest;
 import java.io.Serializable;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import org.apache.beam.sdk.Pipeline;
@@ -159,6 +160,10 @@ public class DynamoDBIOTest implements Serializable {
   public void testWriteDataToDynamo() {
     final List<WriteRequest> writeRequests = DynamoDBIOTestHelper.generateWriteRequests(numOfItems);
 
+    final List<String> overwriteByPKeys = new ArrayList<>();
+    overwriteByPKeys.add(DynamoDBIOTestHelper.ATTR_NAME_1);
+    overwriteByPKeys.add(DynamoDBIOTestHelper.ATTR_NAME_2);
+
     final PCollection<Void> output =
         pipeline
             .apply(Create.of(writeRequests))
@@ -170,7 +175,8 @@ public class DynamoDBIOTest implements Serializable {
                     .withRetryConfiguration(
                         DynamoDBIO.RetryConfiguration.create(5, Duration.standardMinutes(1)))
                     .withAwsClientsProvider(
-                        AwsClientsProviderMock.of(DynamoDBIOTestHelper.getDynamoDBClient())));
+                        AwsClientsProviderMock.of(DynamoDBIOTestHelper.getDynamoDBClient()))
+                    .withOverwriteByPKeys(overwriteByPKeys));
 
     final PCollection<Long> publishedResultsSize = output.apply(Count.globally());
     PAssert.that(publishedResultsSize).containsInAnyOrder(0L);
@@ -186,6 +192,10 @@ public class DynamoDBIOTest implements Serializable {
 
     final List<WriteRequest> writeRequests = DynamoDBIOTestHelper.generateWriteRequests(numOfItems);
 
+    final List<String> overwriteByPKeys = new ArrayList<>();
+    overwriteByPKeys.add(DynamoDBIOTestHelper.ATTR_NAME_1);
+    overwriteByPKeys.add(DynamoDBIOTestHelper.ATTR_NAME_2);
+
     AmazonDynamoDB amazonDynamoDBMock = Mockito.mock(AmazonDynamoDB.class);
     Mockito.when(amazonDynamoDBMock.batchWriteItem(Mockito.any(BatchWriteItemRequest.class)))
         .thenThrow(new AmazonDynamoDBException("Service unavailable"));
@@ -199,7 +209,8 @@ public class DynamoDBIOTest implements Serializable {
                         writeRequest -> KV.of(tableName, writeRequest))
                 .withRetryConfiguration(
                     DynamoDBIO.RetryConfiguration.create(4, Duration.standardSeconds(10)))
-                .withAwsClientsProvider(AwsClientsProviderMock.of(amazonDynamoDBMock)));
+                .withAwsClientsProvider(AwsClientsProviderMock.of(amazonDynamoDBMock))
+                .withOverwriteByPKeys(overwriteByPKeys));
 
     try {
       pipeline.run().waitUntilFinish();
